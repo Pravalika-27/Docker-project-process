@@ -1,0 +1,152 @@
+Docker End-to-End Project
+Step 1: Launch an EC2 Instance with
+t2.large and 25GB Volume
+
+Step 2: Install Jenkins, Git, Docker, &
+Trivy
+
+Step 3: Install the following Jenkins
+Plugins
+- Sonar Scanner
+- NodeJs
+- OWASP Dependency Check
+- Docker Pipeline
+- Eclipse Temurin Installer Version
+- Pipeline Stage View
+
+Step 4: Configure all the plugins into
+Jenkins
+Trivy Installation:
+wget
+https://github.com/aquasecurity/trivy/releases/download/
+v0.18.3/trivy_0.18.3_Linux-64bit.tar.gz
+tar xvf trivy_0.18.3_Linux-64bit.tar.gz
+sudo mv trivy /usr/local/bin/
+vim .bashrc
+export PATH=$PATH:/usr/local/bin/
+source .bashrc
+
+Jenkins Installation:
+amazon-linux-extras install java-openjdk11 -y
+sudo wget -O /etc/yum.repos.d/jenkins.repo
+https://pkg.jenkins.io/redhatstable/jenkins.repo
+sudo rpm --import
+https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+yum install jenkins -y
+systemctl start jenkins
+
+GIT & Docker Installations:
+yum install git docker -y
+systemctl start docker
+chmod 777 ///var/run/docker.sock
+
+Setup Sonar using Docker:
+docker run -d --name sonar -p 9000:9000
+sonarqube:lts-community
+Login to the sonar dashboard with the
+following and credentials
+- username: admin
+- password: admin
+Create one Dummy Project and Generate a
+Security Token in Sonarqube Dashboard
+Configure Plugins to Jenkins
+Go to Jenkins Dashboard → Manage Jenkins
+→ Credentials → Add Secret Text with ID
+“sonar”
+Go To Manage Jenkins → System → Add
+Sonar server with the name of “mysonar” →
+Save
+Click on Add SonarQube Server → Name:
+mysonar → Click on Install automatically
+with default version
+Configure JDK,NodeJs, & DP-Check
+Manage Jenkins → Tools → Add JDK → Name:
+jdk17 → Install Automatically → Select
+“Install from adoptium.net” → Select
+Version as “jdk-17.0.8.1+1”
+Next!!
+Add NodeJS → Name: node16 → Version:
+NodeJS 16.2.0
+Next!!
+Add Dependency-Check → DP-Check →
+Install Automatically → Install from
+github.com → Version: 6.5.1
+Save
+Step 5: Start writing Declarative Pipeline
+
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node16'
+        
+    }
+    environment {
+        SCANNER_HOME=tool 'mysonar'
+    }
+    stages {
+        stage("code") {
+            steps {
+                git 'https://github.com/Pravalika-27/docker-project.git'
+            }
+        }
+        stage("scan code") {
+            steps {
+                withSonarQubeEnv('mysonar') {
+                    sh '''${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectName=zomato \
+                        -Dsonar.projectKey=zomato'''
+                }
+            }
+        }
+        stage("Quality Gates") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsID: 'sonar'
+                }
+            }
+        }
+        stage("Install Dependencies") {
+            steps {
+                sh 'npm install'
+            }
+        }
+        stage("Dependency Check"){
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage("Trivy Scan"){
+            steps {
+                sh 'trivy fs . > trivyfs.txt'
+                
+            }
+        }
+        stage("Build Dockerfile"){
+            steps{
+                sh 'docker build -t image1 .'
+            }
+        }
+        stage("Push"){
+            steps{
+                script {
+                     withDockerRegistry(credentialsId: 'dockerhub_id') {
+                        sh 'docker tag image1 pravalika27/Dproject:mydockerimage'
+                        sh 'docker push pravalika27/Dproject:mydockerimage'
+                    }
+                }
+            }
+        }
+        stage("Image Scan"){
+            steps{
+                sh 'trivy scan pravalika27/Dproject:mydockerimage'
+            }
+        }
+        stage("Deploy"){
+            steps{
+                sh 'docker run -itd --name zomato -p 3000:3000 pravalika27/Dproject:mydockerimage'
+            }
+        }
+    }
+}
